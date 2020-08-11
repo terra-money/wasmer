@@ -265,6 +265,23 @@ pub fn allocate_and_run<R, F: FnOnce() -> R>(size: usize, f: F) -> R {
     }
 }
 
+unsafe fn call_signal_handler(
+    sig: Signal,
+    siginfo: *mut siginfo_t,
+    ucontext: *mut c_void,
+    sig_action: &SigAction,
+) {
+    match sig_action.handler() {
+        SigHandler::SigDfl => {
+            sigaction(sig, sig_action).unwrap();
+            return;
+        }
+        SigHandler::SigIgn => return,
+        SigHandler::Handler(handler) => handler(sig as _),
+        SigHandler::SigAction(handler) => handler(sig as _, siginfo as _, ucontext),
+    }
+}
+
 extern "C" fn signal_trap_handler(
     signum: ::nix::libc::c_int,
     siginfo: *mut siginfo_t,
@@ -439,6 +456,8 @@ extern "C" fn signal_trap_handler(
     }
 }
 
+static mut SIGINT_SYS_HANDLER: Option<SigAction> = None;
+
 extern "C" fn sigint_handler(
     _signum: ::nix::libc::c_int,
     _siginfo: *mut siginfo_t,
@@ -448,8 +467,13 @@ extern "C" fn sigint_handler(
         eprintln!("Got another SIGINT before trap is triggered on WebAssembly side, aborting");
         process::abort();
     }
+
     unsafe {
         set_wasm_interrupt();
+
+        if let Some(prev_handler) = SIGINT_SYS_HANDLER {
+            call_signal_handler(SIGINT, _siginfo, _ucontext, &prev_handler);
+        }
     }
 }
 
@@ -479,7 +503,8 @@ unsafe fn install_sighandler() {
         SaFlags::SA_ONSTACK,
         SigSet::empty(),
     );
-    sigaction(SIGINT, &sa_interrupt).unwrap();
+
+    SIGINT_SYS_HANDLER  = Some(sigaction(SIGINT, &sa_interrupt).unwrap());
 }
 
 #[derive(Debug, Clone)]
