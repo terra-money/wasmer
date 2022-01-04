@@ -229,7 +229,11 @@ pub fn register(
     // First up assert that our chunk of jit functions doesn't collide with
     // any other known chunks of jit functions...
     if let Some((_, prev)) = info.ranges.range(max..).next() {
-        assert!(prev.start >= max);
+        if prev.start < max {
+            panic!("{}", format!("prev.start: {:?},  max: {:?}", prev.start, max));
+        }
+
+        // assert!(prev.start >= max);
     }
     if let Some((prev_end, _)) = info.ranges.range(..=min).next_back() {
         assert!(*prev_end < min);
